@@ -1,17 +1,32 @@
+from django.shortcuts import render
 from rest_framework.decorators import api_view
 from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse, HttpResponse
+from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+from rest_framework import status
+from django.http import HttpResponse
 from django.contrib.auth import authenticate, login, logout
 from django.db.models import Avg
 from .models import Module, Professor, Rating, ModuleInstance
 from django.contrib.auth.models import User
+from django.contrib.auth.models import auth
+from rest_framework.authentication import BasicAuthentication
+# Create your views here.
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from django.utils.decorators import method_decorator
+
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 @ensure_csrf_cookie
 @api_view(['GET'])
 def get_csrf_token(request):
+    """
+    This view ensures that the CSRF cookie is set by using the ensure_csrf_cookie decorator.
+    It returns a simple JSON response indicating that the cookie is set.
+    """
     return JsonResponse({'detail': 'CSRF cookie set'})
-
+@csrf_exempt
 @api_view(['POST'])
 def register(request):
     username = request.data.get("username")
@@ -27,6 +42,7 @@ def register(request):
     user.save()
     return HttpResponse("User created", status=201, content_type = "text/plain")
 
+@csrf_exempt
 @api_view(['POST'])
 def login_user(request):
     username = request.data.get("username")
@@ -39,9 +55,10 @@ def login_user(request):
     login(request,user)
     return HttpResponse("Login was succesfull", status=200, content_type = "text/plain")
 
+@csrf_exempt
 @api_view(['POST'])
 def logout_user(request):
-    logout(request)
+    auth.logout(request)
     return HttpResponse("Logout was succesfull", status=200, content_type = "text/plain")
 
 @api_view(["GET"])
@@ -50,7 +67,7 @@ def list_instances(request):
     data = []
     for instance in instances:
         professor_names=[]
-        all_professors = instance.professor.all()
+        all_professors = instance.professors.all()
         for prof in all_professors:
             professor_names.append(prof.full_name)
         instance_data = {"code": instance.module.code, "module": instance.module.name, "year": instance.year, "semester": instance.semester, "professors": professor_names}
@@ -79,7 +96,7 @@ def average(request):
     if not (professor_id and module_code):
         return HttpResponse("Missing Values", status=400, content_type = "text/plain")
     try:
-        professor = Professor.objects.filter(prof_id=professor_id).first()
+        professor = Professor.objects.get(prof_id=professor_id)
     except Professor.DoesNotExist:
         return HttpResponse("Did not find a professor with this ID", status=404)
     all_module_instances = ModuleInstance.objects.filter(professor = professor, module__code = module_code)
@@ -88,33 +105,46 @@ def average(request):
     agg = Rating.objects.filter(module__in=all_module_instances).aggregate(avg_rating=Avg('rating'))
     average_rating = agg["avg_rating"] or 0
     final_average = round(average_rating)
-    module = Module.objects.filter(code = module_code).first()
+    module = Module.objects.get(code = module_code)
     data = {"professor" : professor.full_name, "module": module.name, "average_rating": final_average}
     return JsonResponse(data, status=200)
 
+
 @api_view(['POST'])
 def rate(request):
-
+    # Now request is a DRF Request object with a .data attribute
     professor_id = request.data.get("professor_id")
     module_code = request.data.get("module_code")
     year = request.data.get("year")
     semester = request.data.get("semester")
     rating = request.data.get("rating")
-
+    
     if not (professor_id and module_code and year and semester and rating):
-        return HttpResponse("Missing values", status=400, content_type = "text/plain")
+        return HttpResponse("Missing values", status=400, content_type="text/plain")
     
+    # Ensure the user is authenticated
     if not request.user.is_authenticated:
-        return HttpResponse("You must login to rate", status=401, content_type = "text/plain")
+        return HttpResponse("You must login to rate", status=401, content_type="text/plain")
     
-    professor = Professor.objects.filter(prof_id = professor_id).first()
-    instance = ModuleInstance.objects.filter(professor = professor, module__code = module_code, year = year, semester = semester).first()
-    if instance is None:
-        return HttpResponse("Could not find any module instances with these values", status=404, content_type = "text/plain")
+    try:
+        professor = Professor.objects.get(prof_id=professor_id)
+        instance = ModuleInstance.objects.get(
+            professor=professor,
+            module__code=module_code,
+            year=year,
+            semester=semester
+        )
+    except Professor.DoesNotExist:
+        return HttpResponse("Professor not found", status=404, content_type="text/plain")
+    except ModuleInstance.DoesNotExist:
+        return HttpResponse("Module instance not found", status=404, content_type="text/plain")
     
+    # Check if the rating already exists for this user
     if Rating.objects.filter(module=instance, user=request.user).exists():
-        return HttpResponse("You have already rate this", status=401, content_type = "text/plain")
-    else:
-        rate_object = Rating.objects.create(module=instance, user=request.user, rating=rating)
-        rate_object.save()
-        return HttpResponse("Rate Succesful", status=201, content_type = "text/plain")
+        return HttpResponse("You have already rated this", status=401, content_type="text/plain")
+    
+    # Create and save the new rating
+    rate_obj = Rating.objects.create(module=instance, user=request.user, rating=rating)
+    rate_obj.save()
+    
+    return HttpResponse("Rate Successful", status=201)

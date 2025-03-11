@@ -1,20 +1,37 @@
 import requests
 session = requests.Session()
 
+def get_csrf():
+    uri = "http://127.0.0.1:8000/csrf/"
+    try:
+        rensponse = session.get(uri)
+        if rensponse.status_code == 200:
+            csrf_token = session.cookies.get("csrftoken", None)
+            if not csrf_token:
+                print("csrf token error")
+        else:
+            print("csrf error")
+    except:
+        print("csrf error")
+
 def register():
+    global session
     print("Creating New User:")
     username = input("Username:")
     email = input("Email:")
     password = input("Password:")
     data = {"username":username, "email":email, "password":password}
+    get_csrf()
+    csrf_token = session.cookies.get("csrftoken", "")
+    headers = {"X-CSRFToken": csrf_token}
     uri = "http://127.0.0.1:8000/register/"
     try:
-        response = session.post(uri, json = data)
+        response = session.post(uri, json = data, headers = headers)
         if response.status_code == 201:
             print("The registration was succesfull")
         else:
             print("The registration failed:" + response.text)
-    except:
+    except requests.RequestException as e:
         print("Error")
 
 def login(url):
@@ -24,27 +41,32 @@ def login(url):
     password = input("Password:")
     data = {"username":username, "password":password}
     uri = "http://127.0.0.1:8000/login/"
+    get_csrf()
+    csrf_token = session.cookies.get("csrftoken", "")
+    headers = {"X-CSRFToken": csrf_token}
     try:
-        response = session.post(uri, json = data)
+        response = session.post(uri, json = data, headers = headers)
         if response.status_code == 200:
             print("The login was succesfull")
         else:
             print("The login failed:" + response.text)
-            session = None
     except:
-        print("Error")
+        print("Connection Error")
 
 def logout():
-    uri = "http://127.0.0.1:8000/logout/"
     global session
+    uri = "http://127.0.0.1:8000/logout/"
+    get_csrf()
+    csrf_token = session.cookies.get("csrftoken", "")
+    headers = {"X-CSRFToken": csrf_token}
     try:
-        response = session.post(uri)
+        response = session.post(uri, headers = headers)
         if response.status_code == 200:
             print("The logout was succesfull")
         else:
             print("The logout failed:" + response.text)
     except:
-        print("Error")
+        print("Connection Error")
 
 def list_instances():
     uri = "http://127.0.0.1:8000/list/"
@@ -52,14 +74,17 @@ def list_instances():
         response = session.get(uri)
         if response.status_code == 200:
             data = response.json()
-            print("code | name | year | semester | professors\n")
-            for instance in data:
-                code = instance["code"]
-                module = instance["module"]
-                year = instance["year"]
-                semester = instance["semester"]
-                professors = instance["professors"]
-                print(f"{code} | {module} | {year} | {semester} | {professors}\n")
+            if not data:
+                print("There are not any module instances available")
+            else:
+                print("code | name | year | semester | professors\n")
+                for instance in data:
+                    code = instance["code"]
+                    module = instance["module"]
+                    year = instance["year"]
+                    semester = instance["semester"]
+                    professors = instance["professors"]
+                    print(f"{code} | {module} | {year} | {semester} | {professors}\n")
         else:
             print("Error:" + response.text)
     except:
@@ -99,7 +124,10 @@ def average(professor_id, module_code):
             module = data["module"]
             rating = data["average_rating"]
             star_rating = to_stars(rating)
-            print(f"The rating of {full_name} {(professor_id)} in module {module} {(module_code)} is {star_rating}")
+            if rating == 0:
+                print(f"There is no rating yet for {full_name} in module {module}")
+            else:
+                print(f"The rating of {full_name} {(professor_id)} in module {module} {(module_code)} is {star_rating}")
         else:
             print("Error:" + response.text)
     except:
@@ -108,6 +136,9 @@ def average(professor_id, module_code):
 def rate(professor_id, module_code, year, semester, rating):
     uri = "http://127.0.0.1:8000/rate/"
     data = {"professor_id": professor_id, "module_code": module_code, "year": year, "semester": semester, "rating": rating}
+    get_csrf()
+    csrf_token = session.cookies.get("csrftoken", "")
+    headers = {"X-CSRFToken": csrf_token}
     try:
         year = int(year)
         semester = int(semester)
@@ -118,7 +149,7 @@ def rate(professor_id, module_code, year, semester, rating):
         print("<Rating> should be an integer between 1-5")
         return
     try:
-        response = session.post(uri, json=data)
+        response = session.post(uri, json=data, headers = headers)
         if response.status_code == 201:
             print("Rating was successfull")
         else:
@@ -126,10 +157,6 @@ def rate(professor_id, module_code, year, semester, rating):
     except:
         print("Exception occurred:")
        
-
-
-
-
 def main():
     while True:
         command = input("Enter command:")
@@ -140,36 +167,38 @@ def main():
                 print("Incorrect command usage. Please try: register")
             else:
                 register()
-        if (action == "login"):
+        elif (action == "login"):
             if (len(command_parts) != 2):
                 print("Incorrect command usage. Please try: login <url>")
             else:
                login(command_parts[1])
-        if (action == "logout"):
+        elif (action == "logout"):
             if (len(command_parts) != 1):
                 print("Incorrect command usage. Please try: logout")
             else:
                 logout()
-        if (action == "list"):
+        elif (action == "list"):
             if (len(command_parts) != 1):
                 print("Incorrect command usage. Please try: list")
             else:
                 list_instances()
-        if (action == "view"):
+        elif (action == "view"):
             if (len(command_parts) != 1):
                 print("Incorrect command usage. Please try: view")
             else:
                 view()
-        if (action == "average"):
+        elif (action == "average"):
             if (len(command_parts) != 3):
                 print("Incorrect command usage. Please try: average <professor_id> <module_code>")
             else:
                 average(command_parts[1], command_parts[2])
-        if (action == "rate"):
+        elif (action == "rate"):
             if (len(command_parts) != 6):
                 print("Incorrect command usage. Please try: rate <professor_id> <module_code> <year> <semester> <rating>")
             else:
                 rate(command_parts[1], command_parts[2],command_parts[3], command_parts[4],command_parts[5])
+        else:
+            print("Wrong command")
 
 if __name__ == "__main__":
     main()
